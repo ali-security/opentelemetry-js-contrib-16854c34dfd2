@@ -1,9 +1,12 @@
 name: Test Packages
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: "mocha --grep pattern to narrow the instrumentation-knex test run"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -13,6 +16,7 @@ jobs:
     strategy:
       fail-fast: false
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     env:
       NPM_CONFIG_UNSAFE_PERM: true
       NODE_OPTIONS: --max-old-space-size=4096
@@ -25,6 +29,15 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 18
+      # Sealed build: the fork is based on the instrumentation-knex-v0.60.0 tag and the
+      # version patch bumps the package to 0.63.0 (@opentelemetry/instrumentation ^0.219.0).
+      # Lock files cannot travel in the version patch, so re-sync package-lock.json with the
+      # bumped package.json, resolving at the 0.63.0 release date.
+      - name: Sync lockfile with version patch
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+        env:
+          NPM_CONFIG_REGISTRY: https://:2026-06-11T14%3A54%3A41.852000Z@time-machines-npm.sealsecurity.io/
+        timeout-minutes: 10
       - name: Install
         run: npm ci --ignore-scripts
         timeout-minutes: 10
@@ -43,19 +56,24 @@ jobs:
             echo "NX_HEAD=HEAD" >> "$GITHUB_ENV"
           fi
       - name: Compile (Delta)
-        run: npm run compile:ci:affected
-      - name: Upload Build Artifacts
+        run: npx nx run-many -t compile -p @opentelemetry/instrumentation-knex
+      - name: Pack
+        run: |
+          mkdir -p /tmp/pack
+          npm pack --workspace=packages/instrumentation-knex --pack-destination=/tmp/pack
+          mv /tmp/pack/opentelemetry-instrumentation-knex-0.63.0.tgz /tmp/pack/instrumentation-knex-0.63.0.tgz
+      - name: Upload Package Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: compile-cache-${{ github.run_number }}
-          path: .nx
-          include-hidden-files: true
+          name: npm-tarball
+          path: /tmp/pack/instrumentation-knex-0.63.0.tgz
           if-no-files-found: error
           retention-days: 7
 
   unit-test:
     needs: compile
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -74,14 +92,18 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
+      # Sealed build: the fork is based on the instrumentation-knex-v0.60.0 tag and the
+      # version patch bumps the package to 0.63.0 (@opentelemetry/instrumentation ^0.219.0).
+      # Lock files cannot travel in the version patch, so re-sync package-lock.json with the
+      # bumped package.json, resolving at the 0.63.0 release date.
+      - name: Sync lockfile with version patch
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+        env:
+          NPM_CONFIG_REGISTRY: https://:2026-06-11T14%3A54%3A41.852000Z@time-machines-npm.sealsecurity.io/
+        timeout-minutes: 10
       - name: Install
         run: npm ci
         timeout-minutes: 10
-      - name: Download Build Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: compile-cache-${{ github.run_number }}
-          path: .nx
       # Note: see comment in the compile job
       - name: Set base and head commits
         run: |
@@ -93,21 +115,21 @@ jobs:
             echo "NX_HEAD=HEAD" >> "$GITHUB_ENV"
           fi
       - name: Compile (Delta)
-        run: npm run compile:ci:affected
-      - name: Unit tests (Browser - Delta)
-        if: ${{ matrix.node == '22' }}
-        run: npm run test:browser:ci:affected
-      - name: Start Test Services (Delta)
-        run: npm run test-services:start:affected
+        run: npx nx run-many -t compile -p @opentelemetry/instrumentation-knex
       - name: Unit tests (Nodejs - Delta)
-        run: npm run test:ci:affected
-      - name: Stop Test Services (Delta)
-        if: always()
-        run: npm run test-services:stop
+        env:
+          TEST_FILTER: ${{ inputs.test-filter }}
+        run: |
+          if [ -n "$TEST_FILTER" ]; then
+            npx cross-env NODE_OPTIONS='-r dotenv/config' DOTENV_CONFIG_PATH=./test/test-services.env nx run-many -t test -p @opentelemetry/instrumentation-knex --outputStyle=stream -- --grep "$TEST_FILTER"
+          else
+            npx cross-env NODE_OPTIONS='-r dotenv/config' DOTENV_CONFIG_PATH=./test/test-services.env nx run-many -t test -p @opentelemetry/instrumentation-knex --outputStyle=stream
+          fi
 
   test-all-versions:
     needs: compile
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -123,13 +145,17 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
+      # Sealed build: the fork is based on the instrumentation-knex-v0.60.0 tag and the
+      # version patch bumps the package to 0.63.0 (@opentelemetry/instrumentation ^0.219.0).
+      # Lock files cannot travel in the version patch, so re-sync package-lock.json with the
+      # bumped package.json, resolving at the 0.63.0 release date.
+      - name: Sync lockfile with version patch
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+        env:
+          NPM_CONFIG_REGISTRY: https://:2026-06-11T14%3A54%3A41.852000Z@time-machines-npm.sealsecurity.io/
+        timeout-minutes: 10
       - run: npm ci
         timeout-minutes: 10
-      - name: Download Build Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: compile-cache-${{ github.run_number }}
-          path: .nx
       # Note: see comment in the compile job
       - name: Set base and head commits
         run: |
@@ -141,29 +167,15 @@ jobs:
             echo "NX_HEAD=HEAD" >> "$GITHUB_ENV"
           fi
       - name: Compile (Delta)
-        run: npm run compile:ci:affected
-      - name: Start Test Services (Delta)
-        run: npm run test-services:start:affected
+        run: npx nx run-many -t compile -p @opentelemetry/instrumentation-knex
       - name: Test All Versions (Delta)
-        run: npm run test-all-versions:ci:affected
-      - name: Stop Test Services (Delta)
-        if: always()
-        run: npm run test-services:stop
-      - name: Upload Test Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: tests-coverage-cache-${{ github.run_number }}-${{ matrix.node }}
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
-          path: |
-            !node_modules
-            packages/*/.nyc_output/**
-            LICENSE
+        run: npx cross-env NODE_OPTIONS='-r dotenv/config' DOTENV_CONFIG_PATH=./test/test-services.env npm run --if-present test-all-versions -w packages/instrumentation-knex
 
   coverage-report:
+    if: false
     needs: test-all-versions
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
