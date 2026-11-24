@@ -15,6 +15,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
+import { SemconvStability } from '@opentelemetry/instrumentation';
 import * as assert from 'assert';
 
 import { KnexInstrumentation } from '../src';
@@ -520,6 +521,58 @@ describe('Knex instrumentation', () => {
             ]);
           }
         );
+      });
+    });
+
+    describe('connection user', () => {
+      const SECRET_USER = 'secret_user';
+
+      beforeEach(async () => {
+        await client.destroy();
+        client = knex({
+          client: 'sqlite3',
+          connection: {
+            filename: ':memory:',
+            user: SECRET_USER,
+          },
+          useNullAsDefault: true,
+        });
+      });
+
+      const assertNoUser = (span: any) => {
+        assert.ok(span, 'expected a span');
+        assert.strictEqual(span.attributes['db.user'], undefined);
+        assert.ok(
+          !Object.values(span.attributes).includes(SECRET_USER),
+          'connection user must not be recorded in any span attribute'
+        );
+      };
+
+      it('should not record db.user with the default semantic conventions', async () => {
+        await client.raw("select date('now')");
+
+        const [span] = memoryExporter.getFinishedSpans();
+        assertNoUser(span);
+        assert.strictEqual(span.attributes['db.system'], 'sqlite');
+        assert.strictEqual(span.attributes['db.name'], ':memory:');
+        assert.strictEqual(span.attributes['db.operation'], 'raw');
+      });
+
+      it('should not record db.user when emitting old and stable semantic conventions', async () => {
+        const instrumentation = plugin as any;
+        const previous = instrumentation._semconvStability;
+        instrumentation._semconvStability = SemconvStability.DUPLICATE;
+        try {
+          await client.raw("select date('now')");
+        } finally {
+          instrumentation._semconvStability = previous;
+        }
+
+        const [span] = memoryExporter.getFinishedSpans();
+        assertNoUser(span);
+        assert.strictEqual(span.attributes['db.name'], ':memory:');
+        assert.strictEqual(span.attributes['db.namespace'], ':memory:');
+        assert.strictEqual(span.attributes['db.system.name'], 'sqlite');
       });
     });
   });

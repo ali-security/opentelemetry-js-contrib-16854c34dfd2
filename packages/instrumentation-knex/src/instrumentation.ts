@@ -32,7 +32,6 @@ import {
   ATTR_DB_SQL_TABLE,
   ATTR_DB_STATEMENT,
   ATTR_DB_SYSTEM,
-  ATTR_DB_USER,
   ATTR_NET_PEER_NAME,
   ATTR_NET_PEER_PORT,
   ATTR_NET_TRANSPORT,
@@ -158,7 +157,6 @@ export class KnexInstrumentation extends InstrumentationBase<KnexInstrumentation
             [ATTR_DB_SYSTEM]: utils.mapSystem(this.client.driverName),
             [ATTR_DB_SQL_TABLE]: table,
             [ATTR_DB_OPERATION]: operation,
-            [ATTR_DB_USER]: config?.connection?.user,
             [ATTR_DB_NAME]: name,
             // Fall back to parsing host and port from connectionString if not explicitly set.
             [ATTR_NET_PEER_NAME]:
